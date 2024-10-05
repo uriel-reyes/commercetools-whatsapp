@@ -4,9 +4,9 @@
   </a>
 </p>
 
-# ts-sdk
+# whatsapp
 
-Included is a pre-configured TypeScript/JavaScript SDK project with a few base functions that the user can run. It compiles TypeScript files from the root directory into JavaScript files in the `dist` directory. It includes a script to compile and run the project.
+WIP project looking to integrate commercetools with whatsapp. Requires a Facebook business account. Using latest version of commercetools TS SDK.
 
 ## Dependencies
 
@@ -17,8 +17,6 @@ Included is a pre-configured TypeScript/JavaScript SDK project with a few base f
   - `@types/node`: Type definitions for Node.js, required for TypeScript to understand Node.js types.
 
 ## Usage
-
-Update `client.ts` with your function and logic.
 
 To compile TypeScript to JavaScript, use the following command:
 `tsc`
