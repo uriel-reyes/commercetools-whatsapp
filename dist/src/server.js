@@ -45,15 +45,17 @@ var app = express();
 var PORT = process.env.PORT || 3000;
 // Use Express's built-in middleware for parsing JSON
 app.use(express.json());
+// Example to track conversation state in-memory (use a database for persistence)
+var conversationState = {}; // Keyed by WhatsApp number (from)
+var processedMessageIds = new Set(); // Track processed message IDs
+var messageTimestamps = {}; // Store message timestamps
 // Root route to respond to GET requests at the homepage
 app.get('/', function (req, res) {
     res.send('Server is running! Welcome to the WhatsApp & commercetools integration.');
 });
-// Example to track conversation state in-memory (use a database for persistence)
-var conversationState = {}; // Keyed by WhatsApp number (from)
 // Webhook route for WhatsApp messages
 app.post('/webhook', function (req, res) { return __awaiter(void 0, void 0, void 0, function () {
-    var body, entry, changes, value, message, from, text_1, currentState, categories, validCategories, categoryNames, categories, selectedCategory, products, productNames, error_1;
+    var body, entry, changes, value, status_1, message, currentTime, from, text_1, currentState, categories, validCategories, categoryNames, categories, selectedCategory, products, productNames, error_1;
     return __generator(this, function (_a) {
         switch (_a.label) {
             case 0:
@@ -65,8 +67,30 @@ app.post('/webhook', function (req, res) { return __awaiter(void 0, void 0, void
                 if (!(entry.changes && entry.changes.length > 0)) return [3 /*break*/, 18];
                 changes = entry.changes[0];
                 value = changes.value;
+                // Check if the webhook event is a message status update and ignore it
+                if (value.statuses && value.statuses.length > 0) {
+                    status_1 = value.statuses[0].status;
+                    console.log("Message status update received:", status_1);
+                    res.status(200).send('Status update received');
+                    return [2 /*return*/]; // Exit early to prevent further processing of status updates
+                }
                 if (!(value.messages && value.messages.length > 0)) return [3 /*break*/, 16];
                 message = value.messages[0];
+                // Check if the message ID has already been processed
+                if (processedMessageIds.has(message.id)) {
+                    console.log('Message already processed:', message.id);
+                    res.status(200).send('Duplicate message ignored');
+                    return [2 /*return*/];
+                }
+                currentTime = Date.now();
+                if (messageTimestamps[message.id] && (currentTime - messageTimestamps[message.id]) < 60000) {
+                    console.log('Duplicate message received within a short timeframe, skipping:', message.id);
+                    res.status(200).send('Duplicate message ignored');
+                    return [2 /*return*/];
+                }
+                // Mark message as processed and store the timestamp
+                processedMessageIds.add(message.id);
+                messageTimestamps[message.id] = currentTime;
                 if (!(message && message.type === 'text' && message.text && message.text.body)) return [3 /*break*/, 14];
                 from = message.from;
                 text_1 = message.text.body.toLowerCase();
@@ -96,7 +120,7 @@ app.post('/webhook', function (req, res) { return __awaiter(void 0, void 0, void
             case 6:
                 products = _a.sent();
                 productNames = products.map(function (prod) { return prod.name['en-US']; }).join('\n');
-                // Update state: reset after sending the product list
+                // Reset conversation state after sending the product list
                 conversationState[from] = null;
                 return [4 /*yield*/, sendMessageToWhatsApp(from, "Here are the products:\n".concat(productNames))];
             case 7:

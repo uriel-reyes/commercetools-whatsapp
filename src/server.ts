@@ -11,13 +11,15 @@ const PORT = process.env.PORT || 3000;
 // Use Express's built-in middleware for parsing JSON
 app.use(express.json());
 
+// Example to track conversation state in-memory (use a database for persistence)
+const conversationState: { [key: string]: string } = {}; // Keyed by WhatsApp number (from)
+const processedMessageIds = new Set<string>(); // Track processed message IDs
+const messageTimestamps: { [key: string]: number } = {}; // Store message timestamps
+
 // Root route to respond to GET requests at the homepage
 app.get('/', (req: express.Request, res: express.Response) => {
     res.send('Server is running! Welcome to the WhatsApp & commercetools integration.');
 });
-
-// Example to track conversation state in-memory (use a database for persistence)
-const conversationState: { [key: string]: string } = {}; // Keyed by WhatsApp number (from)
 
 // Webhook route for WhatsApp messages
 app.post('/webhook', async (req: express.Request, res: express.Response) => {
@@ -30,8 +32,37 @@ app.post('/webhook', async (req: express.Request, res: express.Response) => {
             if (entry.changes && entry.changes.length > 0) {
                 const changes = entry.changes[0];
                 const value = changes.value;
+
+                // Check if the webhook event is a message status update and ignore it
+                if (value.statuses && value.statuses.length > 0) {
+                    const status = value.statuses[0].status;
+                    console.log("Message status update received:", status);
+                    res.status(200).send('Status update received');
+                    return; // Exit early to prevent further processing of status updates
+                }
+
+                // Check if there are messages to process
                 if (value.messages && value.messages.length > 0) {
                     const message = value.messages[0];
+
+                    // Check if the message ID has already been processed
+                    if (processedMessageIds.has(message.id)) {
+                        console.log('Message already processed:', message.id);
+                        res.status(200).send('Duplicate message ignored');
+                        return;
+                    }
+
+                    // Check if the message was received within a short timeframe (e.g., 60 seconds)
+                    const currentTime = Date.now();
+                    if (messageTimestamps[message.id] && (currentTime - messageTimestamps[message.id]) < 60000) {
+                        console.log('Duplicate message received within a short timeframe, skipping:', message.id);
+                        res.status(200).send('Duplicate message ignored');
+                        return;
+                    }
+
+                    // Mark message as processed and store the timestamp
+                    processedMessageIds.add(message.id);
+                    messageTimestamps[message.id] = currentTime;
 
                     if (message && message.type === 'text' && message.text && message.text.body) {
                         const from = message.from;
@@ -41,7 +72,6 @@ app.post('/webhook', async (req: express.Request, res: express.Response) => {
                         const currentState = conversationState[from];
 
                         if (!currentState || currentState === 'asking-for-category') {
-                            // First state: ask for category
                             if (text === 'categories') {
                                 const categories = await getCategories();
                                 const validCategories = categories.filter((cat: any) => cat.slug && cat.slug['en-US']);
@@ -53,7 +83,7 @@ app.post('/webhook', async (req: express.Request, res: express.Response) => {
                                 await sendMessageToWhatsApp(from, `Please choose a category:\n${categoryNames}`);
                             }
                         } else if (currentState === 'awaiting-category-selection') {
-                            // Second state: user selects a category
+                            // Process category selection
                             const categories = await getCategories();
                             const selectedCategory = categories.find(
                                 (cat: any) => cat.name['en-US'].toLowerCase() === text && cat.slug && cat.slug['en-US']
@@ -63,7 +93,7 @@ app.post('/webhook', async (req: express.Request, res: express.Response) => {
                                 const products = await getProductsByCategoryId(selectedCategory.id);
                                 const productNames = products.map((prod: any) => prod.name['en-US']).join('\n');
 
-                                // Update state: reset after sending the product list
+                                // Reset conversation state after sending the product list
                                 conversationState[from] = null;
 
                                 await sendMessageToWhatsApp(from, `Here are the products:\n${productNames}`);
