@@ -16,34 +16,80 @@ app.get('/', (req: express.Request, res: express.Response) => {
     res.send('Server is running! Welcome to the WhatsApp & commercetools integration.');
 });
 
+// Example to track conversation state in-memory (use a database for persistence)
+const conversationState: { [key: string]: string } = {}; // Keyed by WhatsApp number (from)
+
 // Webhook route for WhatsApp messages
 app.post('/webhook', async (req: express.Request, res: express.Response) => {
     try {
         const body = req.body as any;
-        const message = body.entry[0].changes[0].value.messages[0];
-        const from = message.from; // Customer's WhatsApp number
-        const text = message.text.body; // Message content
+        console.log(JSON.stringify(body, null, 2));
 
-        // Fetch categories from commercetools
-        if (text.toLowerCase() === 'categories') {
-            const categories = await getCategories();
-            const categoryNames = categories.map((cat: any) => cat.name.en).join('\n');
-            await sendMessageToWhatsApp(from, `Please choose a category:\n${categoryNames}`);
-        } else {
-            // Match category name and send products from that category
-            const categories = await getCategories();
-            const selectedCategory = categories.find((cat: any) => cat.name.en.toLowerCase() === text.toLowerCase());
+        if (body.entry && body.entry.length > 0) {
+            const entry = body.entry[0];
+            if (entry.changes && entry.changes.length > 0) {
+                const changes = entry.changes[0];
+                const value = changes.value;
+                if (value.messages && value.messages.length > 0) {
+                    const message = value.messages[0];
 
-            if (selectedCategory) {
-                const products = await getProductsByCategory(selectedCategory.id);
-                const productNames = products.map((prod: any) => prod.name.en).join('\n');
-                await sendMessageToWhatsApp(from, `Here are the products:\n${productNames}`);
+                    if (message && message.type === 'text' && message.text && message.text.body) {
+                        const from = message.from;
+                        const text = message.text.body.toLowerCase();
+
+                        // Check the current state of the conversation for the user
+                        const currentState = conversationState[from];
+
+                        if (!currentState || currentState === 'asking-for-category') {
+                            // First state: ask for category
+                            if (text === 'categories') {
+                                const categories = await getCategories();
+                                const validCategories = categories.filter((cat: any) => cat.slug && cat.slug['en-US']);
+                                const categoryNames = validCategories.map((cat: any) => cat.name['en-US']).join('\n');
+
+                                // Update state: user needs to select a category
+                                conversationState[from] = 'awaiting-category-selection';
+
+                                await sendMessageToWhatsApp(from, `Please choose a category:\n${categoryNames}`);
+                            }
+                        } else if (currentState === 'awaiting-category-selection') {
+                            // Second state: user selects a category
+                            const categories = await getCategories();
+                            const selectedCategory = categories.find(
+                                (cat: any) => cat.name['en-US'].toLowerCase() === text && cat.slug && cat.slug['en-US']
+                            );
+
+                            if (selectedCategory) {
+                                const products = await getProductsByCategoryId(selectedCategory.id);
+                                const productNames = products.map((prod: any) => prod.name['en-US']).join('\n');
+
+                                // Update state: reset after sending the product list
+                                conversationState[from] = null;
+
+                                await sendMessageToWhatsApp(from, `Here are the products:\n${productNames}`);
+                            } else {
+                                await sendMessageToWhatsApp(from, "Category not found. Please select a valid category.");
+                            }
+                        } else {
+                            // Default fallback, send a message if no state is set
+                            await sendMessageToWhatsApp(from, 'Please type "categories" to see the available options.');
+                        }
+                    } else {
+                        console.log("Received a non-text message or the message body was not found.");
+                        res.status(200).send('Non-text message received.');
+                    }
+                } else {
+                    console.log("No messages found in the request.");
+                    res.status(200).send('No messages found.');
+                }
             } else {
-                await sendMessageToWhatsApp(from, "Category not found. Please select a valid category.");
+                console.log("No changes found in the request.");
+                res.status(200).send('No changes found.');
             }
+        } else {
+            console.log("No entry found in the request.");
+            res.status(200).send('No entry found.');
         }
-
-        res.status(200).send('Message processed');
     } catch (error) {
         console.error("Error processing WhatsApp message:", error);
         res.status(500).send("Internal Server Error");
@@ -60,6 +106,7 @@ app.listen(PORT, () => {
 async function getCategories() {
     try {
         const response = await apiRoot.categories().get().execute();
+        console.log("Categories response:", JSON.stringify(response.body.results, null, 2));
         return response.body.results;
     } catch (error) {
         console.error("Error fetching categories:", error);
@@ -67,11 +114,19 @@ async function getCategories() {
     }
 }
 
-async function getProductsByCategory(categoryId: string) {
+async function getProductsByCategoryId(categoryId: string) {
     try {
-        const response = await apiRoot.products()
-            .get({ queryArgs: { where: `categories(id="${categoryId}")` } })
+        if (!categoryId) {
+            throw new Error("Category ID is undefined.");
+        }
+
+        // Using product-projections search endpoint and filter query for categories
+        const response = await apiRoot.productProjections()
+            .search()
+            .get({ queryArgs: { "filter.query": `categories.id:"${categoryId}"` } })
             .execute();
+
+        // Returning the search results
         return response.body.results;
     } catch (error) {
         console.error("Error fetching products:", error);
@@ -103,16 +158,12 @@ async function sendMessageToWhatsApp(to: string, message: string) {
     }
 }
 
+// Webhook verification
 app.get('/webhook', (req: express.Request, res: express.Response) => {
-    const verifyToken = process.env.VERIFY_TOKEN;  // Set this in .env
+    const verifyToken = process.env.VERIFY_TOKEN;
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
     const challenge = req.query['hub.challenge'];
-
-    console.log(`mode: ${mode}`);
-    console.log(`token: ${token}`);
-    console.log(`challenge: ${challenge}`);
-    console.log(`verifyToken: ${verifyToken}`);
 
     if (mode && token === verifyToken) {
         res.status(200).send(challenge); // Respond with the challenge to verify webhook
@@ -120,4 +171,3 @@ app.get('/webhook', (req: express.Request, res: express.Response) => {
         res.sendStatus(403);  // Forbidden if verification fails
     }
 });
-

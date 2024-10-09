@@ -49,52 +49,98 @@ app.use(express.json());
 app.get('/', function (req, res) {
     res.send('Server is running! Welcome to the WhatsApp & commercetools integration.');
 });
+// Example to track conversation state in-memory (use a database for persistence)
+var conversationState = {}; // Keyed by WhatsApp number (from)
 // Webhook route for WhatsApp messages
 app.post('/webhook', function (req, res) { return __awaiter(void 0, void 0, void 0, function () {
-    var body, message, from, text_1, categories, categoryNames, categories, selectedCategory, products, productNames, error_1;
+    var body, entry, changes, value, message, from, text_1, currentState, categories, validCategories, categoryNames, categories, selectedCategory, products, productNames, error_1;
     return __generator(this, function (_a) {
         switch (_a.label) {
             case 0:
-                _a.trys.push([0, 10, , 11]);
+                _a.trys.push([0, 22, , 23]);
                 body = req.body;
-                message = body.entry[0].changes[0].value.messages[0];
+                console.log(JSON.stringify(body, null, 2));
+                if (!(body.entry && body.entry.length > 0)) return [3 /*break*/, 20];
+                entry = body.entry[0];
+                if (!(entry.changes && entry.changes.length > 0)) return [3 /*break*/, 18];
+                changes = entry.changes[0];
+                value = changes.value;
+                if (!(value.messages && value.messages.length > 0)) return [3 /*break*/, 16];
+                message = value.messages[0];
+                if (!(message && message.type === 'text' && message.text && message.text.body)) return [3 /*break*/, 14];
                 from = message.from;
-                text_1 = message.text.body;
-                if (!(text_1.toLowerCase() === 'categories')) return [3 /*break*/, 3];
+                text_1 = message.text.body.toLowerCase();
+                currentState = conversationState[from];
+                if (!(!currentState || currentState === 'asking-for-category')) return [3 /*break*/, 4];
+                if (!(text_1 === 'categories')) return [3 /*break*/, 3];
                 return [4 /*yield*/, getCategories()];
             case 1:
                 categories = _a.sent();
-                categoryNames = categories.map(function (cat) { return cat.name.en; }).join('\n');
+                validCategories = categories.filter(function (cat) { return cat.slug && cat.slug['en-US']; });
+                categoryNames = validCategories.map(function (cat) { return cat.name['en-US']; }).join('\n');
+                // Update state: user needs to select a category
+                conversationState[from] = 'awaiting-category-selection';
                 return [4 /*yield*/, sendMessageToWhatsApp(from, "Please choose a category:\n".concat(categoryNames))];
             case 2:
                 _a.sent();
-                return [3 /*break*/, 9];
-            case 3: return [4 /*yield*/, getCategories()];
+                _a.label = 3;
+            case 3: return [3 /*break*/, 13];
             case 4:
-                categories = _a.sent();
-                selectedCategory = categories.find(function (cat) { return cat.name.en.toLowerCase() === text_1.toLowerCase(); });
-                if (!selectedCategory) return [3 /*break*/, 7];
-                return [4 /*yield*/, getProductsByCategory(selectedCategory.id)];
+                if (!(currentState === 'awaiting-category-selection')) return [3 /*break*/, 11];
+                return [4 /*yield*/, getCategories()];
             case 5:
-                products = _a.sent();
-                productNames = products.map(function (prod) { return prod.name.en; }).join('\n');
-                return [4 /*yield*/, sendMessageToWhatsApp(from, "Here are the products:\n".concat(productNames))];
+                categories = _a.sent();
+                selectedCategory = categories.find(function (cat) { return cat.name['en-US'].toLowerCase() === text_1 && cat.slug && cat.slug['en-US']; });
+                if (!selectedCategory) return [3 /*break*/, 8];
+                return [4 /*yield*/, getProductsByCategoryId(selectedCategory.id)];
             case 6:
+                products = _a.sent();
+                productNames = products.map(function (prod) { return prod.name['en-US']; }).join('\n');
+                // Update state: reset after sending the product list
+                conversationState[from] = null;
+                return [4 /*yield*/, sendMessageToWhatsApp(from, "Here are the products:\n".concat(productNames))];
+            case 7:
                 _a.sent();
-                return [3 /*break*/, 9];
-            case 7: return [4 /*yield*/, sendMessageToWhatsApp(from, "Category not found. Please select a valid category.")];
-            case 8:
-                _a.sent();
-                _a.label = 9;
+                return [3 /*break*/, 10];
+            case 8: return [4 /*yield*/, sendMessageToWhatsApp(from, "Category not found. Please select a valid category.")];
             case 9:
-                res.status(200).send('Message processed');
-                return [3 /*break*/, 11];
-            case 10:
+                _a.sent();
+                _a.label = 10;
+            case 10: return [3 /*break*/, 13];
+            case 11: 
+            // Default fallback, send a message if no state is set
+            return [4 /*yield*/, sendMessageToWhatsApp(from, 'Please type "categories" to see the available options.')];
+            case 12:
+                // Default fallback, send a message if no state is set
+                _a.sent();
+                _a.label = 13;
+            case 13: return [3 /*break*/, 15];
+            case 14:
+                console.log("Received a non-text message or the message body was not found.");
+                res.status(200).send('Non-text message received.');
+                _a.label = 15;
+            case 15: return [3 /*break*/, 17];
+            case 16:
+                console.log("No messages found in the request.");
+                res.status(200).send('No messages found.');
+                _a.label = 17;
+            case 17: return [3 /*break*/, 19];
+            case 18:
+                console.log("No changes found in the request.");
+                res.status(200).send('No changes found.');
+                _a.label = 19;
+            case 19: return [3 /*break*/, 21];
+            case 20:
+                console.log("No entry found in the request.");
+                res.status(200).send('No entry found.');
+                _a.label = 21;
+            case 21: return [3 /*break*/, 23];
+            case 22:
                 error_1 = _a.sent();
                 console.error("Error processing WhatsApp message:", error_1);
                 res.status(500).send("Internal Server Error");
-                return [3 /*break*/, 11];
-            case 11: return [2 /*return*/];
+                return [3 /*break*/, 23];
+            case 23: return [2 /*return*/];
         }
     });
 }); });
@@ -113,6 +159,7 @@ function getCategories() {
                     return [4 /*yield*/, BuildClient_1.default.categories().get().execute()];
                 case 1:
                     response = _a.sent();
+                    console.log("Categories response:", JSON.stringify(response.body.results, null, 2));
                     return [2 /*return*/, response.body.results];
                 case 2:
                     error_2 = _a.sent();
@@ -123,18 +170,23 @@ function getCategories() {
         });
     });
 }
-function getProductsByCategory(categoryId) {
+function getProductsByCategoryId(categoryId) {
     return __awaiter(this, void 0, void 0, function () {
         var response, error_3;
         return __generator(this, function (_a) {
             switch (_a.label) {
                 case 0:
                     _a.trys.push([0, 2, , 3]);
-                    return [4 /*yield*/, BuildClient_1.default.products()
-                            .get({ queryArgs: { where: "categories(id=\"".concat(categoryId, "\")") } })
+                    if (!categoryId) {
+                        throw new Error("Category ID is undefined.");
+                    }
+                    return [4 /*yield*/, BuildClient_1.default.productProjections()
+                            .search()
+                            .get({ queryArgs: { "filter.query": "categories.id:\"".concat(categoryId, "\"") } })
                             .execute()];
                 case 1:
                     response = _a.sent();
+                    // Returning the search results
                     return [2 /*return*/, response.body.results];
                 case 2:
                     error_3 = _a.sent();
@@ -175,15 +227,12 @@ function sendMessageToWhatsApp(to, message) {
         });
     });
 }
+// Webhook verification
 app.get('/webhook', function (req, res) {
-    var verifyToken = process.env.VERIFY_TOKEN; // Set this in .env
+    var verifyToken = process.env.VERIFY_TOKEN;
     var mode = req.query['hub.mode'];
     var token = req.query['hub.verify_token'];
     var challenge = req.query['hub.challenge'];
-    console.log("mode: ".concat(mode));
-    console.log("token: ".concat(token));
-    console.log("challenge: ".concat(challenge));
-    console.log("verifyToken: ".concat(verifyToken));
     if (mode && token === verifyToken) {
         res.status(200).send(challenge); // Respond with the challenge to verify webhook
     }
