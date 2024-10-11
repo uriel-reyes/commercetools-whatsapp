@@ -8,17 +8,17 @@ dotenv.config(); // Load environment variables
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Use Express's built-in middleware for parsing JSON
 app.use(express.json());
 
+// Example to track conversation state in-memory (use a database for persistence)
 const conversationState: {
     [key: string]: {
         state: string;
-        products?: { name: string; id: string }[]; // Store product names and IDs
-    };
+        products?: { name: string, id: string }[]; // Store product names and IDs
+        cartId?: string; // Store the cart ID for the user session
+    }
 } = {};
-
-// Track processed message IDs
-const processedMessageIds = new Set<string>();
 
 // Root route to respond to GET requests at the homepage
 app.get('/', (req: express.Request, res: express.Response) => {
@@ -39,39 +39,23 @@ app.post('/webhook', async (req: express.Request, res: express.Response) => {
 
                 // Skip processing message status updates
                 if (value.statuses && value.statuses.length > 0) {
-                    const status = value.statuses[0].status;
-                    console.log('Message status update received:', status);
-                    res.status(200).send('Status update received'); // Acknowledge status update
+                    res.status(200).send('Status update received');
                     return;
                 }
 
                 if (value.messages && value.messages.length > 0) {
                     const message = value.messages[0];
-                    const messageId = message.id;
-
-                    // Check if the message has already been processed
-                    if (processedMessageIds.has(messageId)) {
-                        console.log('Message already processed:', messageId);
-                        res.status(200).send('Message already processed');
-                        return;
-                    }
-
                     if (message && message.type === 'text' && message.text && message.text.body) {
                         const from = message.from;
                         const text = message.text.body.toLowerCase();
 
-                        // Get current conversation state
                         const currentState = conversationState[from]?.state;
 
                         if (!currentState || currentState === 'asking-for-category') {
                             if (text === 'categories') {
                                 const categories = await getCategories();
-                                const validCategories = categories.filter(
-                                    (cat: any) => cat.slug && cat.slug['en-US']
-                                );
-                                const categoryNames = validCategories
-                                    .map((cat: any) => cat.name['en-US'])
-                                    .join('\n');
+                                const validCategories = categories.filter((cat: any) => cat.slug && cat.slug['en-US']);
+                                const categoryNames = validCategories.map((cat: any) => cat.name['en-US']).join('\n');
 
                                 conversationState[from] = { state: 'awaiting-category-selection' };
 
@@ -80,90 +64,84 @@ app.post('/webhook', async (req: express.Request, res: express.Response) => {
                         } else if (currentState === 'awaiting-category-selection') {
                             const categories = await getCategories();
                             const selectedCategory = categories.find(
-                                (cat: any) =>
-                                    cat.name['en-US'].toLowerCase() === text && cat.slug && cat.slug['en-US']
+                                (cat: any) => cat.name['en-US'].toLowerCase() === text && cat.slug && cat.slug['en-US']
                             );
 
                             if (selectedCategory) {
                                 const products = await getProductsByCategoryId(selectedCategory.id);
-                                const productNames = products
-                                    .map((prod: any) => prod.name['en-US'])
-                                    .join('\n');
+                                const productNames = products.map((prod: any) => prod.name['en-US']).join('\n');
 
                                 conversationState[from] = {
                                     state: 'awaiting-product-selection',
-                                    products: products.map((prod: any) => ({
-                                        name: prod.name['en-US'].toLowerCase(),
-                                        id: prod.id,
-                                    })),
+                                    products: products.map((prod: any) => ({ name: prod.name['en-US'].toLowerCase(), id: prod.id })),
                                 };
 
                                 await sendMessageToWhatsApp(from, `Here are the products:\n${productNames}`);
-                                // Send separate message asking for product selection
                                 await sendMessageToWhatsApp(from, 'Let me know which product you would like more information on.');
                             } else {
-                                await sendMessageToWhatsApp(from, 'Category not found. Please select a valid category.');
+                                await sendMessageToWhatsApp(from, "Category not found. Please select a valid category.");
                             }
                         } else if (currentState === 'awaiting-product-selection') {
                             const customerProducts = conversationState[from]?.products || [];
-                            const selectedProduct = customerProducts.find((prod: any) =>
-                                text.includes(prod.name)
-                            );
+                            const selectedProduct = customerProducts.find((prod: any) => text.includes(prod.name));
 
                             if (selectedProduct) {
-                                const productDetails = await getProductDetailsById(selectedProduct.id);
+                                const { productDetails, price } = await getProductDetailsById(selectedProduct.id);
                                 const productImageUrl = productDetails?.masterVariant?.images?.[0]?.url;
-
+                            
                                 if (productImageUrl) {
-                                    await sendImageToWhatsApp(from, productImageUrl, `Here is a picture of the ${selectedProduct.name}`);
+                                    await sendMediaMessageToWhatsApp(from, productImageUrl, `${selectedProduct.name}`, price);
+                                    // Update the conversation state for the next expected input
+                                    conversationState[from].state = 'awaiting-add-or-browse';
                                 } else {
                                     await sendMessageToWhatsApp(from, "Sorry, I couldn't find an image for this product.");
                                 }
-
-                                // Reset conversation state after sending product info
-                                conversationState[from] = { state: null };
-                            } else {
-                                await sendMessageToWhatsApp(from, 'Product not found. Please reply with a valid product name.');
                             }
-                        } else {
-                            await sendMessageToWhatsApp(from, 'Please type "categories" to see the available options.');
+                             else {
+                                await sendMessageToWhatsApp(from, "Product not found. Please reply with a valid product name.");
+                            }
+                        } else if (currentState === 'awaiting-add-or-browse') {
+                            if (text === 'add to cart') {
+                                // Existing add-to-cart logic
+                                let cartId = conversationState[from].cartId;
+                                if (!cartId) {
+                                    const cart = await createCart();
+                                    cartId = cart.id;
+                                    conversationState[from].cartId = cartId;
+                                }
+                        
+                                const selectedProduct = conversationState[from].products?.find(prod => text.includes(prod.name));
+                                if (selectedProduct) {
+                                    await addProductToCart(cartId, selectedProduct.id);
+                                    await sendMessageToWhatsApp(from, `Product added to cart. Your cart ID is ${cartId}.`);
+                                    conversationState[from].state = null; // Reset state
+                                }
+                            } else if (text === 'continue browsing') {
+                                // Go back to category product list
+                                const currentCategoryProducts = conversationState[from].products || [];
+                                const productNames = currentCategoryProducts.map(prod => prod.name).join('\n');
+                                await sendMessageToWhatsApp(from, `Here are the products:\n${productNames}`);
+                                conversationState[from].state = 'awaiting-product-selection';
+                            } else if (text === 'new category') {
+                                // Return the user to the category list
+                                const categories = await getCategories();
+                                const validCategories = categories.filter((cat: any) => cat.slug && cat.slug['en-US']);
+                                const categoryNames = validCategories.map((cat: any) => cat.name['en-US']).join('\n');
+                                await sendMessageToWhatsApp(from, `Please choose a new category:\n${categoryNames}`);
+                        
+                                conversationState[from].state = 'awaiting-category-selection';
+                            } else {
+                                await sendMessageToWhatsApp(from, 'Please type "Add to cart", "Continue browsing", or "New category".');
+                            }
                         }
-
-                        // Mark the message as processed
-                        processedMessageIds.add(messageId);
-                    } else {
-                        console.log('Received a non-text message or the message body was not found.');
-                        res.status(200).send('Non-text message received.');
                     }
-                } else {
-                    console.log('No messages found in the request.');
-                    res.status(200).send('No messages found.');
                 }
-            } else {
-                console.log('No changes found in the request.');
-                res.status(200).send('No changes found.');
             }
-        } else {
-            console.log('No entry found in the request.');
-            res.status(200).send('No entry found.');
         }
+        res.sendStatus(200);
     } catch (error) {
-        console.error('Error processing WhatsApp message:', error);
-        res.status(500).send('Internal Server Error');
-    }
-});
-
-// Ensure a 200 OK is always returned for Webhook verification
-app.get('/webhook', (req: express.Request, res: express.Response) => {
-    const verifyToken = process.env.VERIFY_TOKEN;
-    const mode = req.query['hub.mode'];
-    const token = req.query['hub.verify_token'];
-    const challenge = req.query['hub.challenge'];
-
-    if (mode && token === verifyToken) {
-        res.status(200).send(challenge);
-    } else {
-        res.sendStatus(403);
+        console.error("Error processing WhatsApp message:", error);
+        res.status(500).send("Internal Server Error");
     }
 });
 
@@ -177,47 +155,80 @@ app.listen(PORT, () => {
 async function getCategories() {
     try {
         const response = await apiRoot.categories().get().execute();
-        console.log('Categories response:', JSON.stringify(response.body.results, null, 2));
         return response.body.results;
     } catch (error) {
-        console.error('Error fetching categories:', error);
-        throw new Error('Failed to fetch categories');
+        console.error("Error fetching categories:", error);
+        throw new Error("Failed to fetch categories");
     }
 }
 
 async function getProductsByCategoryId(categoryId: string) {
     try {
-        if (!categoryId) {
-            throw new Error('Category ID is undefined.');
-        }
-
         const response = await apiRoot.productProjections()
             .search()
-            .get({ queryArgs: { 'filter.query': `categories.id:"${categoryId}"` } })
+            .get({ queryArgs: { "filter.query": `categories.id:"${categoryId}"` } })
             .execute();
 
         return response.body.results;
     } catch (error) {
-        console.error('Error fetching products:', error);
-        throw new Error('Failed to fetch products');
+        console.error("Error fetching products:", error);
+        throw new Error("Failed to fetch products");
     }
 }
 
 async function getProductDetailsById(productId: string) {
     try {
-        if (!productId) {
-            throw new Error('Product ID is undefined.');
-        }
-
         const response = await apiRoot.productProjections().withId({ ID: productId }).get().execute();
-        return response.body;
+        const product = response.body;
+
+        // Assuming the price is located in the masterVariant
+        const price = product.masterVariant?.prices?.[0]?.value?.centAmount / 100 || 'N/A'; // Adjust currency formatting as needed
+
+        return {
+            productDetails: product,
+            price: `${product.masterVariant?.prices?.[0]?.value?.currencyCode} ${price}` // Format price with currency
+        };
     } catch (error) {
-        console.error('Error fetching product details:', error);
-        throw new Error('Failed to fetch product details');
+        console.error("Error fetching product details:", error);
+        throw new Error("Failed to fetch product details");
     }
 }
 
-// Function to send a text message via WhatsApp
+async function createCart() {
+    try {
+        const response = await apiRoot.carts().post({
+            body: {
+                currency: 'USD',
+                store:{
+                    typeId: 'store',
+                    key: 'whatsapp'
+                }
+            }
+        }).execute();
+        return response.body;
+    } catch (error) {
+        console.error("Error creating cart:", error);
+        throw new Error("Failed to create cart");
+    }
+}
+
+async function addProductToCart(cartId: string, productId: string) {
+    try {
+        await apiRoot.carts().withId({ ID: cartId }).post({
+            body: {
+                version: 1, // Assuming the initial version; you may need to track cart version
+                actions: [{
+                    action: 'addLineItem',
+                    productId
+                }]
+            }
+        }).execute();
+    } catch (error) {
+        console.error("Error adding product to cart:", error);
+        throw new Error("Failed to add product to cart");
+    }
+}
+
 async function sendMessageToWhatsApp(to: string, message: string) {
     try {
         const data = {
@@ -237,27 +248,30 @@ async function sendMessageToWhatsApp(to: string, message: string) {
             }
         );
     } catch (error) {
-        console.error('Error sending message to WhatsApp:', error);
-        throw new Error('Failed to send message to WhatsApp');
+        console.error("Error sending message to WhatsApp:", error);
+        throw new Error("Failed to send message to WhatsApp");
     }
 }
 
-// Function to send an image via WhatsApp
-async function sendImageToWhatsApp(to: string, imageUrl: string, caption: string) {
+async function sendMediaMessageToWhatsApp(to: string, mediaUrl: string, productName: string, price: string) {
     try {
-        const data = {
+        // Format the caption to include both the product name and price
+        const caption = `\nPrice: ${price}`;
+
+        const mediaMessage = {
             messaging_product: 'whatsapp',
+            recipient_type: 'individual',
             to,
             type: 'image',
             image: {
-                link: imageUrl,
-                caption: caption,
+                link: mediaUrl,
+                caption // Pass the caption with product price
             },
         };
 
         await axios.post(
             `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/messages`,
-            data,
+            mediaMessage,
             {
                 headers: {
                     Authorization: `Bearer ${process.env.ACCESS_TOKEN}`,
@@ -265,8 +279,28 @@ async function sendImageToWhatsApp(to: string, imageUrl: string, caption: string
                 },
             }
         );
+
+        // Add a small delay to ensure the image message is delivered before the prompt
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        // Send the updated prompt
+        await sendMessageToWhatsApp(to, 'Add to cart, continue browsing, or new category?');
     } catch (error) {
-        console.error('Error sending image to WhatsApp:', error);
-        throw new Error('Failed to send image to WhatsApp');
+        console.error("Error sending media message or follow-up text:", error);
+        throw new Error("Failed to send media and options message");
     }
 }
+
+// Webhook verification
+app.get('/webhook', (req: express.Request, res: express.Response) => {
+    const verifyToken = process.env.VERIFY_TOKEN;
+    const mode = req.query['hub.mode'];
+    const token = req.query['hub.verify_token'];
+    const challenge = req.query['hub.challenge'];
+
+    if (mode && token === verifyToken) {
+        res.status(200).send(challenge); // Respond with the challenge to verify webhook
+    } else {
+        res.sendStatus(403);  // Forbidden if verification fails
+    }
+});
