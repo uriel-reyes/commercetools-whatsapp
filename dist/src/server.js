@@ -46,125 +46,148 @@ var PORT = process.env.PORT || 3000;
 // Use Express's built-in middleware for parsing JSON
 app.use(express.json());
 // Example to track conversation state in-memory (use a database for persistence)
-var conversationState = {}; // Keyed by WhatsApp number (from)
-var processedMessageIds = new Set(); // Track processed message IDs
-var messageTimestamps = {}; // Store message timestamps
+var conversationState = {};
 // Root route to respond to GET requests at the homepage
 app.get('/', function (req, res) {
     res.send('Server is running! Welcome to the WhatsApp & commercetools integration.');
 });
 // Webhook route for WhatsApp messages
 app.post('/webhook', function (req, res) { return __awaiter(void 0, void 0, void 0, function () {
-    var body, entry, changes, value, status_1, message, currentTime, from, text_1, currentState, categories, validCategories, categoryNames, categories, selectedCategory, products, productNames, error_1;
-    return __generator(this, function (_a) {
-        switch (_a.label) {
+    var body, entry, changes, value, status_1, message, from, text_1, currentState, categories, validCategories, categoryNames, categories, selectedCategory, products, productNames, customerProducts, selectedProduct, productDetails, productImageUrl, error_1;
+    var _a, _b, _c, _d, _e;
+    return __generator(this, function (_f) {
+        switch (_f.label) {
             case 0:
-                _a.trys.push([0, 22, , 23]);
+                _f.trys.push([0, 33, , 34]);
                 body = req.body;
                 console.log(JSON.stringify(body, null, 2));
-                if (!(body.entry && body.entry.length > 0)) return [3 /*break*/, 20];
+                if (!(body.entry && body.entry.length > 0)) return [3 /*break*/, 31];
                 entry = body.entry[0];
-                if (!(entry.changes && entry.changes.length > 0)) return [3 /*break*/, 18];
+                if (!(entry.changes && entry.changes.length > 0)) return [3 /*break*/, 29];
                 changes = entry.changes[0];
                 value = changes.value;
-                // Check if the webhook event is a message status update and ignore it
+                // Skip processing message status updates
                 if (value.statuses && value.statuses.length > 0) {
                     status_1 = value.statuses[0].status;
                     console.log("Message status update received:", status_1);
                     res.status(200).send('Status update received');
-                    return [2 /*return*/]; // Exit early to prevent further processing of status updates
+                    return [2 /*return*/];
                 }
-                if (!(value.messages && value.messages.length > 0)) return [3 /*break*/, 16];
+                if (!(value.messages && value.messages.length > 0)) return [3 /*break*/, 27];
                 message = value.messages[0];
-                // Check if the message ID has already been processed
-                if (processedMessageIds.has(message.id)) {
-                    console.log('Message already processed:', message.id);
-                    res.status(200).send('Duplicate message ignored');
-                    return [2 /*return*/];
-                }
-                currentTime = Date.now();
-                if (messageTimestamps[message.id] && (currentTime - messageTimestamps[message.id]) < 60000) {
-                    console.log('Duplicate message received within a short timeframe, skipping:', message.id);
-                    res.status(200).send('Duplicate message ignored');
-                    return [2 /*return*/];
-                }
-                // Mark message as processed and store the timestamp
-                processedMessageIds.add(message.id);
-                messageTimestamps[message.id] = currentTime;
-                if (!(message && message.type === 'text' && message.text && message.text.body)) return [3 /*break*/, 14];
+                if (!(message && message.type === 'text' && message.text && message.text.body)) return [3 /*break*/, 25];
                 from = message.from;
                 text_1 = message.text.body.toLowerCase();
-                currentState = conversationState[from];
+                currentState = (_a = conversationState[from]) === null || _a === void 0 ? void 0 : _a.state;
                 if (!(!currentState || currentState === 'asking-for-category')) return [3 /*break*/, 4];
                 if (!(text_1 === 'categories')) return [3 /*break*/, 3];
                 return [4 /*yield*/, getCategories()];
             case 1:
-                categories = _a.sent();
+                categories = _f.sent();
                 validCategories = categories.filter(function (cat) { return cat.slug && cat.slug['en-US']; });
                 categoryNames = validCategories.map(function (cat) { return cat.name['en-US']; }).join('\n');
-                // Update state: user needs to select a category
-                conversationState[from] = 'awaiting-category-selection';
+                conversationState[from] = { state: 'awaiting-category-selection' };
                 return [4 /*yield*/, sendMessageToWhatsApp(from, "Please choose a category:\n".concat(categoryNames))];
             case 2:
-                _a.sent();
-                _a.label = 3;
-            case 3: return [3 /*break*/, 13];
+                _f.sent();
+                _f.label = 3;
+            case 3: return [3 /*break*/, 24];
             case 4:
-                if (!(currentState === 'awaiting-category-selection')) return [3 /*break*/, 11];
+                if (!(currentState === 'awaiting-category-selection')) return [3 /*break*/, 12];
                 return [4 /*yield*/, getCategories()];
             case 5:
-                categories = _a.sent();
+                categories = _f.sent();
                 selectedCategory = categories.find(function (cat) { return cat.name['en-US'].toLowerCase() === text_1 && cat.slug && cat.slug['en-US']; });
-                if (!selectedCategory) return [3 /*break*/, 8];
+                if (!selectedCategory) return [3 /*break*/, 9];
                 return [4 /*yield*/, getProductsByCategoryId(selectedCategory.id)];
             case 6:
-                products = _a.sent();
+                products = _f.sent();
                 productNames = products.map(function (prod) { return prod.name['en-US']; }).join('\n');
-                // Reset conversation state after sending the product list
-                conversationState[from] = null;
+                // Store products in conversation state for reference
+                conversationState[from] = {
+                    state: 'awaiting-product-selection',
+                    products: products.map(function (prod) { return ({ name: prod.name['en-US'].toLowerCase(), id: prod.id }); }),
+                };
+                // Send the product list first
                 return [4 /*yield*/, sendMessageToWhatsApp(from, "Here are the products:\n".concat(productNames))];
             case 7:
-                _a.sent();
-                return [3 /*break*/, 10];
-            case 8: return [4 /*yield*/, sendMessageToWhatsApp(from, "Category not found. Please select a valid category.")];
-            case 9:
-                _a.sent();
-                _a.label = 10;
-            case 10: return [3 /*break*/, 13];
-            case 11: 
-            // Default fallback, send a message if no state is set
-            return [4 /*yield*/, sendMessageToWhatsApp(from, 'Please type "categories" to see the available options.')];
+                // Send the product list first
+                _f.sent();
+                // Send the follow-up message to ask for product info
+                return [4 /*yield*/, sendMessageToWhatsApp(from, "Let me know which product you would like more information on.")];
+            case 8:
+                // Send the follow-up message to ask for product info
+                _f.sent();
+                return [3 /*break*/, 11];
+            case 9: return [4 /*yield*/, sendMessageToWhatsApp(from, "Category not found. Please select a valid category.")];
+            case 10:
+                _f.sent();
+                _f.label = 11;
+            case 11: return [3 /*break*/, 24];
             case 12:
-                // Default fallback, send a message if no state is set
-                _a.sent();
-                _a.label = 13;
-            case 13: return [3 /*break*/, 15];
+                if (!(currentState === 'awaiting-product-selection')) return [3 /*break*/, 22];
+                customerProducts = ((_b = conversationState[from]) === null || _b === void 0 ? void 0 : _b.products) || [];
+                selectedProduct = customerProducts.find(function (prod) { return text_1.includes(prod.name); });
+                if (!selectedProduct) return [3 /*break*/, 19];
+                return [4 /*yield*/, getProductDetailsById(selectedProduct.id)];
+            case 13:
+                productDetails = _f.sent();
+                productImageUrl = (_e = (_d = (_c = productDetails === null || productDetails === void 0 ? void 0 : productDetails.masterVariant) === null || _c === void 0 ? void 0 : _c.images) === null || _d === void 0 ? void 0 : _d[0]) === null || _e === void 0 ? void 0 : _e.url;
+                if (!productImageUrl) return [3 /*break*/, 16];
+                // Send the product information as a text message
+                return [4 /*yield*/, sendMessageToWhatsApp(from, "Here is more information on ".concat(selectedProduct.name, ":"))];
             case 14:
+                // Send the product information as a text message
+                _f.sent();
+                // Send the product image as an image message
+                return [4 /*yield*/, sendImageToWhatsApp(from, productImageUrl, selectedProduct.name)];
+            case 15:
+                // Send the product image as an image message
+                _f.sent();
+                // Reset conversation state after sending product info
+                conversationState[from] = { state: null };
+                return [3 /*break*/, 18];
+            case 16: return [4 /*yield*/, sendMessageToWhatsApp(from, "Sorry, I couldn't find an image for this product.")];
+            case 17:
+                _f.sent();
+                _f.label = 18;
+            case 18: return [3 /*break*/, 21];
+            case 19: return [4 /*yield*/, sendMessageToWhatsApp(from, "Product not found. Please reply with a valid product name.")];
+            case 20:
+                _f.sent();
+                _f.label = 21;
+            case 21: return [3 /*break*/, 24];
+            case 22: return [4 /*yield*/, sendMessageToWhatsApp(from, 'Please type "categories" to see the available options.')];
+            case 23:
+                _f.sent();
+                _f.label = 24;
+            case 24: return [3 /*break*/, 26];
+            case 25:
                 console.log("Received a non-text message or the message body was not found.");
                 res.status(200).send('Non-text message received.');
-                _a.label = 15;
-            case 15: return [3 /*break*/, 17];
-            case 16:
+                _f.label = 26;
+            case 26: return [3 /*break*/, 28];
+            case 27:
                 console.log("No messages found in the request.");
                 res.status(200).send('No messages found.');
-                _a.label = 17;
-            case 17: return [3 /*break*/, 19];
-            case 18:
+                _f.label = 28;
+            case 28: return [3 /*break*/, 30];
+            case 29:
                 console.log("No changes found in the request.");
                 res.status(200).send('No changes found.');
-                _a.label = 19;
-            case 19: return [3 /*break*/, 21];
-            case 20:
+                _f.label = 30;
+            case 30: return [3 /*break*/, 32];
+            case 31:
                 console.log("No entry found in the request.");
                 res.status(200).send('No entry found.');
-                _a.label = 21;
-            case 21: return [3 /*break*/, 23];
-            case 22:
-                error_1 = _a.sent();
+                _f.label = 32;
+            case 32: return [3 /*break*/, 34];
+            case 33:
+                error_1 = _f.sent();
                 console.error("Error processing WhatsApp message:", error_1);
                 res.status(500).send("Internal Server Error");
-                return [3 /*break*/, 23];
-            case 23: return [2 /*return*/];
+                return [3 /*break*/, 34];
+            case 34: return [2 /*return*/];
         }
     });
 }); });
@@ -221,9 +244,32 @@ function getProductsByCategoryId(categoryId) {
         });
     });
 }
+function getProductDetailsById(productId) {
+    return __awaiter(this, void 0, void 0, function () {
+        var response, error_4;
+        return __generator(this, function (_a) {
+            switch (_a.label) {
+                case 0:
+                    _a.trys.push([0, 2, , 3]);
+                    if (!productId) {
+                        throw new Error("Product ID is undefined.");
+                    }
+                    return [4 /*yield*/, BuildClient_1.default.productProjections().withId({ ID: productId }).get().execute()];
+                case 1:
+                    response = _a.sent();
+                    return [2 /*return*/, response.body];
+                case 2:
+                    error_4 = _a.sent();
+                    console.error("Error fetching product details:", error_4);
+                    throw new Error("Failed to fetch product details");
+                case 3: return [2 /*return*/];
+            }
+        });
+    });
+}
 function sendMessageToWhatsApp(to, message) {
     return __awaiter(this, void 0, void 0, function () {
-        var data, error_4;
+        var data, error_5;
         return __generator(this, function (_a) {
             switch (_a.label) {
                 case 0:
@@ -243,9 +289,44 @@ function sendMessageToWhatsApp(to, message) {
                     _a.sent();
                     return [3 /*break*/, 3];
                 case 2:
-                    error_4 = _a.sent();
-                    console.error("Error sending message to WhatsApp:", error_4);
+                    error_5 = _a.sent();
+                    console.error("Error sending message to WhatsApp:", error_5);
                     throw new Error("Failed to send message to WhatsApp");
+                case 3: return [2 /*return*/];
+            }
+        });
+    });
+}
+function sendImageToWhatsApp(to, mediaUrl, caption) {
+    return __awaiter(this, void 0, void 0, function () {
+        var data, error_6;
+        return __generator(this, function (_a) {
+            switch (_a.label) {
+                case 0:
+                    _a.trys.push([0, 2, , 3]);
+                    data = {
+                        messaging_product: 'whatsapp',
+                        recipient_type: 'individual',
+                        to: to, // WhatsApp phone number
+                        type: 'image',
+                        image: {
+                            link: mediaUrl, // The URL of the image
+                            caption: caption,
+                        },
+                    };
+                    return [4 /*yield*/, axios_1.default.post("https://graph.facebook.com/v17.0/".concat(process.env.PHONE_NUMBER_ID, "/messages"), data, {
+                            headers: {
+                                Authorization: "Bearer ".concat(process.env.ACCESS_TOKEN),
+                                'Content-Type': 'application/json',
+                            },
+                        })];
+                case 1:
+                    _a.sent();
+                    return [3 /*break*/, 3];
+                case 2:
+                    error_6 = _a.sent();
+                    console.error("Error sending image to WhatsApp:", error_6);
+                    throw new Error("Failed to send image to WhatsApp");
                 case 3: return [2 /*return*/];
             }
         });

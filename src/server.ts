@@ -12,9 +12,12 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 
 // Example to track conversation state in-memory (use a database for persistence)
-const conversationState: { [key: string]: string } = {}; // Keyed by WhatsApp number (from)
-const processedMessageIds = new Set<string>(); // Track processed message IDs
-const messageTimestamps: { [key: string]: number } = {}; // Store message timestamps
+const conversationState: {
+    [key: string]: {
+      state: string;
+      products?: { name: string, id: string }[]; // Store product names and IDs
+    }
+  } = {};   
 
 // Root route to respond to GET requests at the homepage
 app.get('/', (req: express.Request, res: express.Response) => {
@@ -33,43 +36,22 @@ app.post('/webhook', async (req: express.Request, res: express.Response) => {
                 const changes = entry.changes[0];
                 const value = changes.value;
 
-                // Check if the webhook event is a message status update and ignore it
+                // Skip processing message status updates
                 if (value.statuses && value.statuses.length > 0) {
                     const status = value.statuses[0].status;
                     console.log("Message status update received:", status);
                     res.status(200).send('Status update received');
-                    return; // Exit early to prevent further processing of status updates
+                    return;
                 }
 
-                // Check if there are messages to process
                 if (value.messages && value.messages.length > 0) {
                     const message = value.messages[0];
-
-                    // Check if the message ID has already been processed
-                    if (processedMessageIds.has(message.id)) {
-                        console.log('Message already processed:', message.id);
-                        res.status(200).send('Duplicate message ignored');
-                        return;
-                    }
-
-                    // Check if the message was received within a short timeframe (e.g., 60 seconds)
-                    const currentTime = Date.now();
-                    if (messageTimestamps[message.id] && (currentTime - messageTimestamps[message.id]) < 60000) {
-                        console.log('Duplicate message received within a short timeframe, skipping:', message.id);
-                        res.status(200).send('Duplicate message ignored');
-                        return;
-                    }
-
-                    // Mark message as processed and store the timestamp
-                    processedMessageIds.add(message.id);
-                    messageTimestamps[message.id] = currentTime;
-
                     if (message && message.type === 'text' && message.text && message.text.body) {
                         const from = message.from;
                         const text = message.text.body.toLowerCase();
 
-                        // Check the current state of the conversation for the user
-                        const currentState = conversationState[from];
+                        // Get current conversation state
+                        const currentState = conversationState[from]?.state;
 
                         if (!currentState || currentState === 'asking-for-category') {
                             if (text === 'categories') {
@@ -77,13 +59,11 @@ app.post('/webhook', async (req: express.Request, res: express.Response) => {
                                 const validCategories = categories.filter((cat: any) => cat.slug && cat.slug['en-US']);
                                 const categoryNames = validCategories.map((cat: any) => cat.name['en-US']).join('\n');
 
-                                // Update state: user needs to select a category
-                                conversationState[from] = 'awaiting-category-selection';
+                                conversationState[from] = { state: 'awaiting-category-selection' };
 
                                 await sendMessageToWhatsApp(from, `Please choose a category:\n${categoryNames}`);
                             }
                         } else if (currentState === 'awaiting-category-selection') {
-                            // Process category selection
                             const categories = await getCategories();
                             const selectedCategory = categories.find(
                                 (cat: any) => cat.name['en-US'].toLowerCase() === text && cat.slug && cat.slug['en-US']
@@ -93,15 +73,46 @@ app.post('/webhook', async (req: express.Request, res: express.Response) => {
                                 const products = await getProductsByCategoryId(selectedCategory.id);
                                 const productNames = products.map((prod: any) => prod.name['en-US']).join('\n');
 
-                                // Reset conversation state after sending the product list
-                                conversationState[from] = null;
+                                // Store products in conversation state for reference
+                                conversationState[from] = {
+                                    state: 'awaiting-product-selection',
+                                    products: products.map((prod: any) => ({ name: prod.name['en-US'].toLowerCase(), id: prod.id })),
+                                };
 
+                                // Send the product list first
                                 await sendMessageToWhatsApp(from, `Here are the products:\n${productNames}`);
+
+                                // Send the follow-up message to ask for product info
+                                await sendMessageToWhatsApp(from, "Let me know which product you would like more information on.");
                             } else {
                                 await sendMessageToWhatsApp(from, "Category not found. Please select a valid category.");
                             }
+                        } else if (currentState === 'awaiting-product-selection') {
+                            // Process product selection
+                            const customerProducts = conversationState[from]?.products || [];
+                            const selectedProduct = customerProducts.find((prod: any) => text.includes(prod.name));
+
+                            if (selectedProduct) {
+                                // Retrieve product details, including the image
+                                const productDetails = await getProductDetailsById(selectedProduct.id);
+                                const productImageUrl = productDetails?.masterVariant?.images?.[0]?.url;
+
+                                if (productImageUrl) {
+                                    // Send the product information as a text message
+                                    await sendMessageToWhatsApp(from, `Here is more information on the ${selectedProduct.name}:`);
+
+                                    // Send the product image as an image message
+                                    await sendImageToWhatsApp(from, productImageUrl, selectedProduct.name);
+
+                                    // Reset conversation state after sending product info
+                                    conversationState[from] = { state: null };
+                                } else {
+                                    await sendMessageToWhatsApp(from, "Sorry, I couldn't find an image for this product.");
+                                }
+                            } else {
+                                await sendMessageToWhatsApp(from, "Product not found. Please reply with a valid product name.");
+                            }
                         } else {
-                            // Default fallback, send a message if no state is set
                             await sendMessageToWhatsApp(from, 'Please type "categories" to see the available options.');
                         }
                     } else {
@@ -164,6 +175,21 @@ async function getProductsByCategoryId(categoryId: string) {
     }
 }
 
+async function getProductDetailsById(productId: string) {
+    try {
+        if (!productId) {
+            throw new Error("Product ID is undefined.");
+        }
+
+        // Query commercetools for product details
+        const response = await apiRoot.productProjections().withId({ ID: productId }).get().execute();
+        return response.body;
+    } catch (error) {
+        console.error("Error fetching product details:", error);
+        throw new Error("Failed to fetch product details");
+    }
+}
+
 async function sendMessageToWhatsApp(to: string, message: string) {
     try {
         const data = {
@@ -185,6 +211,35 @@ async function sendMessageToWhatsApp(to: string, message: string) {
     } catch (error) {
         console.error("Error sending message to WhatsApp:", error);
         throw new Error("Failed to send message to WhatsApp");
+    }
+}
+
+async function sendImageToWhatsApp(to: string, mediaUrl: string, caption: string) {
+    try {
+        const data = {
+            messaging_product: 'whatsapp',
+            recipient_type: 'individual',
+            to, // WhatsApp phone number
+            type: 'image',
+            image: {
+                link: mediaUrl, // The URL of the image
+                caption,        // Optional caption for the image
+            },
+        };
+
+        await axios.post(
+            `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/messages`,
+            data,
+            {
+                headers: {
+                    Authorization: `Bearer ${process.env.ACCESS_TOKEN}`,
+                    'Content-Type': 'application/json',
+                },
+            }
+        );
+    } catch (error) {
+        console.error("Error sending image to WhatsApp:", error);
+        throw new Error("Failed to send image to WhatsApp");
     }
 }
 
