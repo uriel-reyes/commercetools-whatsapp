@@ -101,20 +101,33 @@ app.post('/webhook', async (req: express.Request, res: express.Response) => {
                                 await sendMessageToWhatsApp(from, "Product not found. Please reply with a valid product name.");
                             }
                         } else if (currentState === 'awaiting-add-or-browse') {
-                            if (text === 'add to cart') {
-                                // Existing add-to-cart logic
-                                let cartId = conversationState[from].cartId;
-                                if (!cartId) {
-                                    const cart = await createCart();
-                                    cartId = cart.id;
-                                    conversationState[from].cartId = cartId;
-                                }
+                            const customerProducts = conversationState[from]?.products || [];
+                            const selectedProduct = customerProducts.find((prod: any) => text.includes(prod.name));
                         
-                                const selectedProduct = conversationState[from].products?.find(prod => text.includes(prod.name));
+                            if (text === 'add to cart') {
                                 if (selectedProduct) {
-                                    await addProductToCart(cartId, selectedProduct.id);
-                                    await sendMessageToWhatsApp(from, `Product added to cart. Your cart ID is ${cartId}.`);
-                                    conversationState[from].state = null; // Reset state
+                                    let cartId = conversationState[from].cartId;
+                                    
+                                    // Create a cart and add the product in a single step if no cart exists
+                                    if (!cartId) {
+                                        const cart = await createCart(selectedProduct.id, 1); // Pass selected product ID and quantity
+                                        cartId = cart.id;
+                                        conversationState[from].cartId = cartId;
+                                    } else {
+                                        // If a cart exists, just add the product to it
+                                        await addProductToCart(cartId, selectedProduct.id);
+                                    }
+                                    
+                                    // Confirm product added to cart and provide cart details
+                                    const cartContents = await getCartContents(cartId);
+                                    const cartSummary = cartContents.lineItems
+                                        .map((item: any) => `${item.name.en} - Quantity: ${item.quantity}`)
+                                        .join('\n');
+                                        
+                                    await sendMessageToWhatsApp(from, `Product added to cart. Here is your current cart:\n${cartSummary}`);
+                                    conversationState[from].state = null; // Reset state after adding to cart
+                                } else {
+                                    await sendMessageToWhatsApp(from, "Product not found for adding to cart.");
                                 }
                             } else if (text === 'continue browsing') {
                                 // Go back to category product list
@@ -128,12 +141,12 @@ app.post('/webhook', async (req: express.Request, res: express.Response) => {
                                 const validCategories = categories.filter((cat: any) => cat.slug && cat.slug['en-US']);
                                 const categoryNames = validCategories.map((cat: any) => cat.name['en-US']).join('\n');
                                 await sendMessageToWhatsApp(from, `Please choose a new category:\n${categoryNames}`);
-                        
                                 conversationState[from].state = 'awaiting-category-selection';
                             } else {
                                 await sendMessageToWhatsApp(from, 'Please type "Add to cart", "Continue browsing", or "New category".');
                             }
                         }
+                        
                     }
                 }
             }
@@ -194,23 +207,31 @@ async function getProductDetailsById(productId: string) {
     }
 }
 
-async function createCart() {
+async function createCart(productId: string, quantity: number = 1) {
     try {
         const response = await apiRoot.carts().post({
             body: {
                 currency: 'USD',
-                store:{
+                store: {
                     typeId: 'store',
                     key: 'whatsapp'
-                }
+                },
+                lineItems: [
+                    {
+                        productId: productId,  // Product ID passed in
+                        quantity: quantity,    // Default quantity is 1
+                    }
+                ]
             }
         }).execute();
+
         return response.body;
     } catch (error) {
         console.error("Error creating cart:", error);
         throw new Error("Failed to create cart");
     }
 }
+
 
 async function addProductToCart(cartId: string, productId: string) {
     try {
@@ -226,6 +247,16 @@ async function addProductToCart(cartId: string, productId: string) {
     } catch (error) {
         console.error("Error adding product to cart:", error);
         throw new Error("Failed to add product to cart");
+    }
+}
+
+async function getCartContents(cartId: string) {
+    try {
+        const response = await apiRoot.carts().withId({ ID: cartId }).get().execute();
+        return response.body;
+    } catch (error) {
+        console.error("Error retrieving cart contents:", error);
+        throw new Error("Failed to retrieve cart contents");
     }
 }
 
