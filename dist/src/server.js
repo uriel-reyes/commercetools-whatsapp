@@ -53,27 +53,22 @@ app.get('/', function (req, res) {
 });
 // Webhook route for WhatsApp messages
 app.post('/webhook', function (req, res) { return __awaiter(void 0, void 0, void 0, function () {
-    var body, entry, changes, value, message, from, text_1, currentState, categories, validCategories, categoryNames, categories, selectedCategory, products, productNames, customerProducts, selectedProduct, _a, productDetails, price, productImageUrl, customerProducts, selectedProduct, cartId, cart, cartContents, cartSummary, currentCategoryProducts, productNames, categories, validCategories, categoryNames, error_1;
-    var _b, _c, _d, _e, _f, _g;
-    return __generator(this, function (_h) {
-        switch (_h.label) {
+    var body, entry, changes, value, message, from, text_1, currentState, categories, validCategories, categoryNames, categories, selectedCategory, products, productNames, customerProducts, selectedProduct, _a, productDetails, price, productImageUrl, cartId, cartVersion, cart, selectedProduct, cartId, cartVersion, cartContents, cartSummary, currentCategoryProducts, productNames, categories, validCategories, categoryNames, error_1;
+    var _b, _c, _d, _e, _f, _g, _h, _j;
+    return __generator(this, function (_k) {
+        switch (_k.label) {
             case 0:
-                _h.trys.push([0, 39, , 40]);
+                _k.trys.push([0, 42, , 43]);
                 body = req.body;
                 console.log(JSON.stringify(body, null, 2));
-                if (!(body.entry && body.entry.length > 0)) return [3 /*break*/, 38];
+                if (!(body.entry && body.entry.length > 0)) return [3 /*break*/, 41];
                 entry = body.entry[0];
-                if (!(entry.changes && entry.changes.length > 0)) return [3 /*break*/, 38];
+                if (!(entry.changes && entry.changes.length > 0)) return [3 /*break*/, 41];
                 changes = entry.changes[0];
                 value = changes.value;
-                // Skip processing message status updates
-                if (value.statuses && value.statuses.length > 0) {
-                    res.status(200).send('Status update received');
-                    return [2 /*return*/];
-                }
-                if (!(value.messages && value.messages.length > 0)) return [3 /*break*/, 38];
+                if (!(value.messages && value.messages.length > 0)) return [3 /*break*/, 41];
                 message = value.messages[0];
-                if (!(message && message.type === 'text' && message.text && message.text.body)) return [3 /*break*/, 38];
+                if (!(message && message.type === 'text' && message.text && message.text.body)) return [3 /*break*/, 41];
                 from = message.from;
                 text_1 = message.text.body.toLowerCase();
                 currentState = (_b = conversationState[from]) === null || _b === void 0 ? void 0 : _b.state;
@@ -81,25 +76,26 @@ app.post('/webhook', function (req, res) { return __awaiter(void 0, void 0, void
                 if (!(text_1 === 'categories')) return [3 /*break*/, 3];
                 return [4 /*yield*/, getCategories()];
             case 1:
-                categories = _h.sent();
+                categories = _k.sent();
                 validCategories = categories.filter(function (cat) { return cat.slug && cat.slug['en-US']; });
                 categoryNames = validCategories.map(function (cat) { return cat.name['en-US']; }).join('\n');
                 conversationState[from] = { state: 'awaiting-category-selection' };
                 return [4 /*yield*/, sendMessageToWhatsApp(from, "Please choose a category:\n".concat(categoryNames))];
             case 2:
-                _h.sent();
-                _h.label = 3;
-            case 3: return [3 /*break*/, 38];
+                _k.sent();
+                _k.label = 3;
+            case 3: return [3 /*break*/, 41];
             case 4:
-                if (!(currentState === 'awaiting-category-selection')) return [3 /*break*/, 12];
+                if (!(currentState === 'awaiting-category-selection')) return [3 /*break*/, 15];
                 return [4 /*yield*/, getCategories()];
             case 5:
-                categories = _h.sent();
+                categories = _k.sent();
                 selectedCategory = categories.find(function (cat) { return cat.name['en-US'].toLowerCase() === text_1 && cat.slug && cat.slug['en-US']; });
-                if (!selectedCategory) return [3 /*break*/, 9];
+                if (!selectedCategory) return [3 /*break*/, 12];
                 return [4 /*yield*/, getProductsByCategoryId(selectedCategory.id)];
             case 6:
-                products = _h.sent();
+                products = _k.sent();
+                if (!(products.length > 0)) return [3 /*break*/, 9];
                 productNames = products.map(function (prod) { return prod.name['en-US']; }).join('\n');
                 conversationState[from] = {
                     state: 'awaiting-product-selection',
@@ -107,113 +103,124 @@ app.post('/webhook', function (req, res) { return __awaiter(void 0, void 0, void
                 };
                 return [4 /*yield*/, sendMessageToWhatsApp(from, "Here are the products:\n".concat(productNames))];
             case 7:
-                _h.sent();
+                _k.sent();
                 return [4 /*yield*/, sendMessageToWhatsApp(from, 'Let me know which product you would like more information on.')];
             case 8:
-                _h.sent();
+                _k.sent();
                 return [3 /*break*/, 11];
-            case 9: return [4 /*yield*/, sendMessageToWhatsApp(from, "Category not found. Please select a valid category.")];
+            case 9: return [4 /*yield*/, sendMessageToWhatsApp(from, "Sorry, there are no products available in this category.")];
             case 10:
-                _h.sent();
-                _h.label = 11;
-            case 11: return [3 /*break*/, 38];
-            case 12:
-                if (!(currentState === 'awaiting-product-selection')) return [3 /*break*/, 21];
+                _k.sent();
+                _k.label = 11;
+            case 11: return [3 /*break*/, 14];
+            case 12: return [4 /*yield*/, sendMessageToWhatsApp(from, "Category not found. Please select a valid category.")];
+            case 13:
+                _k.sent();
+                _k.label = 14;
+            case 14: return [3 /*break*/, 41];
+            case 15:
+                if (!(currentState === 'awaiting-product-selection')) return [3 /*break*/, 26];
                 customerProducts = ((_c = conversationState[from]) === null || _c === void 0 ? void 0 : _c.products) || [];
                 selectedProduct = customerProducts.find(function (prod) { return text_1.includes(prod.name); });
-                if (!selectedProduct) return [3 /*break*/, 18];
+                if (!selectedProduct) return [3 /*break*/, 23];
                 return [4 /*yield*/, getProductDetailsById(selectedProduct.id)];
-            case 13:
-                _a = _h.sent(), productDetails = _a.productDetails, price = _a.price;
-                productImageUrl = (_f = (_e = (_d = productDetails === null || productDetails === void 0 ? void 0 : productDetails.masterVariant) === null || _d === void 0 ? void 0 : _d.images) === null || _e === void 0 ? void 0 : _e[0]) === null || _f === void 0 ? void 0 : _f.url;
-                if (!productImageUrl) return [3 /*break*/, 15];
-                return [4 /*yield*/, sendMediaMessageToWhatsApp(from, productImageUrl, "".concat(selectedProduct.name), price)];
-            case 14:
-                _h.sent();
-                // Update the conversation state for the next expected input
-                conversationState[from].state = 'awaiting-add-or-browse';
-                return [3 /*break*/, 17];
-            case 15: return [4 /*yield*/, sendMessageToWhatsApp(from, "Sorry, I couldn't find an image for this product.")];
             case 16:
-                _h.sent();
-                _h.label = 17;
-            case 17: return [3 /*break*/, 20];
-            case 18: return [4 /*yield*/, sendMessageToWhatsApp(from, "Product not found. Please reply with a valid product name.")];
-            case 19:
-                _h.sent();
-                _h.label = 20;
-            case 20: return [3 /*break*/, 38];
-            case 21:
-                if (!(currentState === 'awaiting-add-or-browse')) return [3 /*break*/, 38];
-                customerProducts = ((_g = conversationState[from]) === null || _g === void 0 ? void 0 : _g.products) || [];
-                selectedProduct = customerProducts.find(function (prod) { return text_1.includes(prod.name); });
-                if (!(text_1 === 'add to cart')) return [3 /*break*/, 31];
-                if (!selectedProduct) return [3 /*break*/, 28];
+                _a = _k.sent(), productDetails = _a.productDetails, price = _a.price;
+                productImageUrl = (_f = (_e = (_d = productDetails === null || productDetails === void 0 ? void 0 : productDetails.masterVariant) === null || _d === void 0 ? void 0 : _d.images) === null || _e === void 0 ? void 0 : _e[0]) === null || _f === void 0 ? void 0 : _f.url;
+                if (!productImageUrl) return [3 /*break*/, 20];
                 cartId = conversationState[from].cartId;
-                if (!!cartId) return [3 /*break*/, 23];
+                cartVersion = conversationState[from].cartVersion;
+                if (!!cartId) return [3 /*break*/, 18];
                 return [4 /*yield*/, createCart(selectedProduct.id, 1)];
-            case 22:
-                cart = _h.sent();
+            case 17:
+                cart = _k.sent();
                 cartId = cart.id;
+                cartVersion = cart.version; // Capture the cart version for future updates
                 conversationState[from].cartId = cartId;
-                return [3 /*break*/, 25];
-            case 23: 
-            // If a cart exists, just add the product to it
-            return [4 /*yield*/, addProductToCart(cartId, selectedProduct.id)];
+                conversationState[from].cartVersion = cartVersion;
+                conversationState[from].selectedProduct = selectedProduct;
+                _k.label = 18;
+            case 18: return [4 /*yield*/, sendMediaMessageToWhatsApp(from, productImageUrl, "".concat(selectedProduct.name), price)];
+            case 19:
+                _k.sent();
+                conversationState[from].state = 'awaiting-add-or-browse';
+                return [3 /*break*/, 22];
+            case 20: return [4 /*yield*/, sendMessageToWhatsApp(from, "Sorry, I couldn't find an image for this product.")];
+            case 21:
+                _k.sent();
+                _k.label = 22;
+            case 22: return [3 /*break*/, 25];
+            case 23: return [4 /*yield*/, sendMessageToWhatsApp(from, "Product not found. Please reply with a valid product name.")];
             case 24:
-                // If a cart exists, just add the product to it
-                _h.sent();
-                _h.label = 25;
-            case 25: return [4 /*yield*/, getCartContents(cartId)];
+                _k.sent();
+                _k.label = 25;
+            case 25: return [3 /*break*/, 41];
             case 26:
-                cartContents = _h.sent();
+                if (!(currentState === 'awaiting-add-or-browse')) return [3 /*break*/, 41];
+                selectedProduct = (_g = conversationState[from]) === null || _g === void 0 ? void 0 : _g.selectedProduct;
+                cartId = (_h = conversationState[from]) === null || _h === void 0 ? void 0 : _h.cartId;
+                cartVersion = (_j = conversationState[from]) === null || _j === void 0 ? void 0 : _j.cartVersion;
+                if (!(text_1 === 'add to cart')) return [3 /*break*/, 32];
+                if (!(selectedProduct && cartId)) return [3 /*break*/, 29];
+                return [4 /*yield*/, getCartContents(cartId)];
+            case 27:
+                cartContents = _k.sent();
+                cartVersion = cartContents.version; // Ensure we always have the latest cart version
                 cartSummary = cartContents.lineItems
-                    .map(function (item) { return "".concat(item.name.en, " - Quantity: ").concat(item.quantity); })
+                    .map(function (item) { return "".concat(item.name.en_US, " - Quantity: ").concat(item.quantity); })
                     .join('\n');
                 return [4 /*yield*/, sendMessageToWhatsApp(from, "Product added to cart. Here is your current cart:\n".concat(cartSummary))];
-            case 27:
-                _h.sent();
+            case 28:
+                _k.sent();
                 conversationState[from].state = null; // Reset state after adding to cart
-                return [3 /*break*/, 30];
-            case 28: return [4 /*yield*/, sendMessageToWhatsApp(from, "Product not found for adding to cart.")];
-            case 29:
-                _h.sent();
-                _h.label = 30;
-            case 30: return [3 /*break*/, 38];
-            case 31:
-                if (!(text_1 === 'continue browsing')) return [3 /*break*/, 33];
+                return [3 /*break*/, 31];
+            case 29: return [4 /*yield*/, sendMessageToWhatsApp(from, "Product not found for adding to cart.")];
+            case 30:
+                _k.sent();
+                _k.label = 31;
+            case 31: return [3 /*break*/, 41];
+            case 32:
+                if (!(text_1 === 'continue browsing')) return [3 /*break*/, 36];
+                if (!(cartId && selectedProduct)) return [3 /*break*/, 34];
+                return [4 /*yield*/, removeLineItemFromCart(cartId, selectedProduct.id, cartVersion)];
+            case 33:
+                _k.sent();
+                cartVersion++; // Increment the version after updating the cart
+                conversationState[from].cartVersion = cartVersion; // Update the cart version in state
+                _k.label = 34;
+            case 34:
                 currentCategoryProducts = conversationState[from].products || [];
                 productNames = currentCategoryProducts.map(function (prod) { return prod.name; }).join('\n');
                 return [4 /*yield*/, sendMessageToWhatsApp(from, "Here are the products:\n".concat(productNames))];
-            case 32:
-                _h.sent();
+            case 35:
+                _k.sent();
                 conversationState[from].state = 'awaiting-product-selection';
-                return [3 /*break*/, 38];
-            case 33:
-                if (!(text_1 === 'new category')) return [3 /*break*/, 36];
+                return [3 /*break*/, 41];
+            case 36:
+                if (!(text_1 === 'new category')) return [3 /*break*/, 39];
                 return [4 /*yield*/, getCategories()];
-            case 34:
-                categories = _h.sent();
+            case 37:
+                categories = _k.sent();
                 validCategories = categories.filter(function (cat) { return cat.slug && cat.slug['en-US']; });
                 categoryNames = validCategories.map(function (cat) { return cat.name['en-US']; }).join('\n');
                 return [4 /*yield*/, sendMessageToWhatsApp(from, "Please choose a new category:\n".concat(categoryNames))];
-            case 35:
-                _h.sent();
-                conversationState[from].state = 'awaiting-category-selection';
-                return [3 /*break*/, 38];
-            case 36: return [4 /*yield*/, sendMessageToWhatsApp(from, 'Please type "Add to cart", "Continue browsing", or "New category".')];
-            case 37:
-                _h.sent();
-                _h.label = 38;
             case 38:
+                _k.sent();
+                conversationState[from].state = 'awaiting-category-selection';
+                return [3 /*break*/, 41];
+            case 39: return [4 /*yield*/, sendMessageToWhatsApp(from, 'Please type "Add to cart", "Continue browsing", or "New category".')];
+            case 40:
+                _k.sent();
+                _k.label = 41;
+            case 41:
                 res.sendStatus(200);
-                return [3 /*break*/, 40];
-            case 39:
-                error_1 = _h.sent();
+                return [3 /*break*/, 43];
+            case 42:
+                error_1 = _k.sent();
                 console.error("Error processing WhatsApp message:", error_1);
                 res.status(500).send("Internal Server Error");
-                return [3 /*break*/, 40];
-            case 40: return [2 /*return*/];
+                return [3 /*break*/, 43];
+            case 43: return [2 /*return*/];
         }
     });
 }); });
@@ -267,23 +274,24 @@ function getProductsByCategoryId(categoryId) {
 }
 function getProductDetailsById(productId) {
     return __awaiter(this, void 0, void 0, function () {
-        var response, product, price, error_4;
-        var _a, _b, _c, _d, _e, _f, _g, _h;
-        return __generator(this, function (_j) {
-            switch (_j.label) {
+        var response, product, usdPrice, price, error_4;
+        var _a, _b;
+        return __generator(this, function (_c) {
+            switch (_c.label) {
                 case 0:
-                    _j.trys.push([0, 2, , 3]);
+                    _c.trys.push([0, 2, , 3]);
                     return [4 /*yield*/, BuildClient_1.default.productProjections().withId({ ID: productId }).get().execute()];
                 case 1:
-                    response = _j.sent();
+                    response = _c.sent();
                     product = response.body;
-                    price = ((_d = (_c = (_b = (_a = product.masterVariant) === null || _a === void 0 ? void 0 : _a.prices) === null || _b === void 0 ? void 0 : _b[0]) === null || _c === void 0 ? void 0 : _c.value) === null || _d === void 0 ? void 0 : _d.centAmount) / 100 || 'N/A';
+                    usdPrice = (_b = (_a = product.masterVariant) === null || _a === void 0 ? void 0 : _a.prices) === null || _b === void 0 ? void 0 : _b.find(function (price) { return price.value.currencyCode === 'USD'; });
+                    price = usdPrice ? (usdPrice.value.centAmount / 100).toFixed(2) : 'N/A';
                     return [2 /*return*/, {
                             productDetails: product,
-                            price: "".concat((_h = (_g = (_f = (_e = product.masterVariant) === null || _e === void 0 ? void 0 : _e.prices) === null || _f === void 0 ? void 0 : _f[0]) === null || _g === void 0 ? void 0 : _g.value) === null || _h === void 0 ? void 0 : _h.currencyCode, " ").concat(price) // Format price with currency
+                            price: "USD ".concat(price) // Always return the price formatted in USD
                         }];
                 case 2:
-                    error_4 = _j.sent();
+                    error_4 = _c.sent();
                     console.error("Error fetching product details:", error_4);
                     throw new Error("Failed to fetch product details");
                 case 3: return [2 /*return*/];
@@ -291,9 +299,40 @@ function getProductDetailsById(productId) {
         });
     });
 }
+function addProductToCart(cartId, productId) {
+    return __awaiter(this, void 0, void 0, function () {
+        var response, error_5;
+        return __generator(this, function (_a) {
+            switch (_a.label) {
+                case 0:
+                    _a.trys.push([0, 2, , 3]);
+                    return [4 /*yield*/, BuildClient_1.default.carts().withId({ ID: cartId }).post({
+                            body: {
+                                version: 1, // Assuming the initial version; you may need to track cart version
+                                actions: [{
+                                        action: 'addLineItem',
+                                        productId: productId
+                                    }]
+                            }
+                        }).execute()];
+                case 1:
+                    response = _a.sent();
+                    console.log("Product added to cart. Cart ID:", cartId);
+                    console.log("Updated Cart:", response.body.lineItems);
+                    return [3 /*break*/, 3];
+                case 2:
+                    error_5 = _a.sent();
+                    console.error("Error adding product to cart:", error_5.response ? error_5.response.data : error_5.message);
+                    throw new Error("Failed to add product to cart");
+                case 3: return [2 /*return*/];
+            }
+        });
+    });
+}
+// Create cart function now returns the cart version and ID
 function createCart(productId_1) {
     return __awaiter(this, arguments, void 0, function (productId, quantity) {
-        var response, error_5;
+        var response, error_6;
         if (quantity === void 0) { quantity = 1; }
         return __generator(this, function (_a) {
             switch (_a.label) {
@@ -316,39 +355,43 @@ function createCart(productId_1) {
                         }).execute()];
                 case 1:
                     response = _a.sent();
-                    return [2 /*return*/, response.body];
+                    console.log("Cart created successfully with ID:", response.body.id);
+                    console.log("Cart version:", response.body.version);
+                    return [2 /*return*/, response.body]; // Return both the cart ID and version
                 case 2:
-                    error_5 = _a.sent();
-                    console.error("Error creating cart:", error_5);
+                    error_6 = _a.sent();
+                    console.error("Error creating cart:", error_6.response ? error_6.response.data : error_6.message);
                     throw new Error("Failed to create cart");
                 case 3: return [2 /*return*/];
             }
         });
     });
 }
-function addProductToCart(cartId, productId) {
+// Helper function to remove a line item from the cart with version tracking
+function removeLineItemFromCart(cartId, productId, version) {
     return __awaiter(this, void 0, void 0, function () {
-        var error_6;
+        var response, error_7;
         return __generator(this, function (_a) {
             switch (_a.label) {
                 case 0:
                     _a.trys.push([0, 2, , 3]);
                     return [4 /*yield*/, BuildClient_1.default.carts().withId({ ID: cartId }).post({
                             body: {
-                                version: 1, // Assuming the initial version; you may need to track cart version
+                                version: version, // Use the current version of the cart
                                 actions: [{
-                                        action: 'addLineItem',
-                                        productId: productId
+                                        action: 'removeLineItem',
+                                        lineItemId: productId
                                     }]
                             }
                         }).execute()];
                 case 1:
-                    _a.sent();
-                    return [3 /*break*/, 3];
+                    response = _a.sent();
+                    console.log("Removed product ".concat(productId, " from cart ").concat(cartId, ". New version: ").concat(response.body.version));
+                    return [2 /*return*/, response.body.version]; // Return updated version
                 case 2:
-                    error_6 = _a.sent();
-                    console.error("Error adding product to cart:", error_6);
-                    throw new Error("Failed to add product to cart");
+                    error_7 = _a.sent();
+                    console.error("Error removing product from cart:", error_7.response ? error_7.response.data : error_7.message);
+                    throw new Error("Failed to remove product from cart");
                 case 3: return [2 /*return*/];
             }
         });
@@ -356,7 +399,7 @@ function addProductToCart(cartId, productId) {
 }
 function getCartContents(cartId) {
     return __awaiter(this, void 0, void 0, function () {
-        var response, error_7;
+        var response, error_8;
         return __generator(this, function (_a) {
             switch (_a.label) {
                 case 0:
@@ -366,8 +409,8 @@ function getCartContents(cartId) {
                     response = _a.sent();
                     return [2 /*return*/, response.body];
                 case 2:
-                    error_7 = _a.sent();
-                    console.error("Error retrieving cart contents:", error_7);
+                    error_8 = _a.sent();
+                    console.error("Error retrieving cart contents:", error_8);
                     throw new Error("Failed to retrieve cart contents");
                 case 3: return [2 /*return*/];
             }
@@ -376,7 +419,7 @@ function getCartContents(cartId) {
 }
 function sendMessageToWhatsApp(to, message) {
     return __awaiter(this, void 0, void 0, function () {
-        var data, error_8;
+        var data, error_9;
         return __generator(this, function (_a) {
             switch (_a.label) {
                 case 0:
@@ -396,8 +439,8 @@ function sendMessageToWhatsApp(to, message) {
                     _a.sent();
                     return [3 /*break*/, 3];
                 case 2:
-                    error_8 = _a.sent();
-                    console.error("Error sending message to WhatsApp:", error_8);
+                    error_9 = _a.sent();
+                    console.error("Error sending message to WhatsApp:", error_9);
                     throw new Error("Failed to send message to WhatsApp");
                 case 3: return [2 /*return*/];
             }
@@ -406,7 +449,7 @@ function sendMessageToWhatsApp(to, message) {
 }
 function sendMediaMessageToWhatsApp(to, mediaUrl, productName, price) {
     return __awaiter(this, void 0, void 0, function () {
-        var caption, mediaMessage, error_9;
+        var caption, mediaMessage, error_10;
         return __generator(this, function (_a) {
             switch (_a.label) {
                 case 0:
@@ -442,8 +485,8 @@ function sendMediaMessageToWhatsApp(to, mediaUrl, productName, price) {
                     _a.sent();
                     return [3 /*break*/, 5];
                 case 4:
-                    error_9 = _a.sent();
-                    console.error("Error sending media message or follow-up text:", error_9);
+                    error_10 = _a.sent();
+                    console.error("Error sending media message or follow-up text:", error_10);
                     throw new Error("Failed to send media and options message");
                 case 5: return [2 /*return*/];
             }
