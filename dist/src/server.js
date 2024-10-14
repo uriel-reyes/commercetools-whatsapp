@@ -182,8 +182,10 @@ app.post('/webhook', function (req, res) { return __awaiter(void 0, void 0, void
                 // Update conversation state with new cart version and line item ID
                 conversationState[from].cartVersion = version;
                 conversationState[from].lineItemId = lineItemId_1;
+                // Only inform the user when adding a new product, not when updating
                 return [4 /*yield*/, sendMessageToWhatsApp(from, "Product added to your cart.")];
             case 31:
+                // Only inform the user when adding a new product, not when updating
                 _r.sent();
                 _r.label = 32;
             case 32: return [4 /*yield*/, getCartContents(cartId)];
@@ -213,6 +215,9 @@ app.post('/webhook', function (req, res) { return __awaiter(void 0, void 0, void
                 updatedVersion = _r.sent();
                 // Update the conversation state with the new cart version
                 conversationState[from].cartVersion = updatedVersion;
+                // Clear selected product and lineItemId since the user is continuing to browse
+                conversationState[from].selectedProduct = null;
+                conversationState[from].lineItemId = null;
                 currentCategoryProducts = conversationState[from].products || [];
                 productNames = currentCategoryProducts.map(function (prod) { return prod.name; }).join('\n');
                 return [4 /*yield*/, sendMessageToWhatsApp(from, "Here are the products:\n".concat(productNames))];
@@ -232,6 +237,9 @@ app.post('/webhook', function (req, res) { return __awaiter(void 0, void 0, void
                 categories = _r.sent();
                 validCategories = categories.filter(function (cat) { return cat.slug && cat.slug['en-US']; });
                 categoryNames = validCategories.map(function (cat) { return cat.name['en-US']; }).join('\n');
+                // Clear selected product and lineItemId when browsing a new category
+                conversationState[from].selectedProduct = null;
+                conversationState[from].lineItemId = null;
                 return [4 /*yield*/, sendMessageToWhatsApp(from, "Please choose a new category:\n".concat(categoryNames))];
             case 47:
                 _r.sent();

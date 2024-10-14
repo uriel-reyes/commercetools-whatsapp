@@ -120,14 +120,14 @@ app.post('/webhook', async (req: express.Request, res: express.Response) => {
                             const cartId = conversationState[from]?.cartId;
                             let cartVersion = conversationState[from]?.cartVersion;
                             const lineItemId = conversationState[from]?.lineItemId; // Track the lineItemId
-
+                        
                             if (text === 'add to cart') {
                                 if (selectedProduct && cartId) {
                                     const cartContents = await getCartContents(cartId);
-                            
+                                
                                     // Check if the product is already in the cart
                                     const lineItem = cartContents.lineItems.find((item: any) => item.productId === selectedProduct.id);
-                            
+                                
                                     if (lineItem) {
                                         // Product is already in the cart, change the quantity to 1 silently
                                         const updatedCart = await changeLineItemQuantity(cartId, lineItem.id, 1, conversationState[from].cartVersion);
@@ -140,15 +140,17 @@ app.post('/webhook', async (req: express.Request, res: express.Response) => {
                                         conversationState[from].cartVersion = version;
                                         conversationState[from].lineItemId = lineItemId;
                                         
+                                        // Only inform the user when adding a new product, not when updating
                                         await sendMessageToWhatsApp(from, `Product added to your cart.`);
                                     }
-                            
+                                
+                                    // Get updated cart info and inform the user
                                     const updatedCartContents = await getCartContents(cartId);
                                     await sendMessageToWhatsApp(from, `You now have ${updatedCartContents.totalLineItemQuantity} product(s) in your cart with a total of ${updatedCartContents.totalPrice.centAmount / 100} USD.`);
-                            
+                                
                                     // Ask if the customer wants to place the order
                                     await sendMessageToWhatsApp(from, `Would you like to place the order? Reply with 'Yes' to confirm.`);
-                            
+                                
                                     // Set the state to awaiting-order-confirmation
                                     conversationState[from].state = 'awaiting-order-confirmation';
                                 } else {
@@ -163,6 +165,11 @@ app.post('/webhook', async (req: express.Request, res: express.Response) => {
                                     // Update the conversation state with the new cart version
                                     conversationState[from].cartVersion = updatedVersion;
                                     
+                                    // Clear selected product and lineItemId since the user is continuing to browse
+                                    conversationState[from].selectedProduct = null;
+                                    conversationState[from].lineItemId = null;
+                                    
+                                    // Send the updated product list
                                     const currentCategoryProducts = conversationState[from].products || [];
                                     const productNames = currentCategoryProducts.map(prod => prod.name).join('\n');
                                     await sendMessageToWhatsApp(from, `Here are the products:\n${productNames}`);
@@ -171,15 +178,21 @@ app.post('/webhook', async (req: express.Request, res: express.Response) => {
                                     await sendMessageToWhatsApp(from, "No product found in the cart to remove.");
                                 }
                             } else if (text === 'new category') {
+                                // Fetch and display new categories
                                 const categories = await getCategories();
                                 const validCategories = categories.filter((cat: any) => cat.slug && cat.slug['en-US']);
                                 const categoryNames = validCategories.map((cat: any) => cat.name['en-US']).join('\n');
+                                
+                                // Clear selected product and lineItemId when browsing a new category
+                                conversationState[from].selectedProduct = null;
+                                conversationState[from].lineItemId = null;
+                        
                                 await sendMessageToWhatsApp(from, `Please choose a new category:\n${categoryNames}`);
                                 conversationState[from].state = 'awaiting-category-selection';
-                            }else {
+                            } else {
                                 await sendMessageToWhatsApp(from, 'Please type "Add to cart", "Continue browsing", or "New category".');
                             }
-                        }
+                        }                        
                         else if (currentState === 'awaiting-order-confirmation') {
                             const cartId = conversationState[from]?.cartId;  // Retrieve cartId from the conversation state
                         
