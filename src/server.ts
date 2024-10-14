@@ -11,13 +11,14 @@ const PORT = process.env.PORT || 3000;
 // Use Express's built-in middleware for parsing JSON
 app.use(express.json());
 
-// Example to track conversation state in-memory (use a database for persistence)
+// Update the conversationState to include lineItemId
 const conversationState: {
     [key: string]: {
         state: string;
         products?: { name: string, id: string }[]; // Store product names and IDs
         cartId?: string; // Store the cart ID for the user session
         cartVersion?: number; // Store the cart version for the user session
+        lineItemId?: string; // Store the line item ID for the user session
         selectedProduct?: { name: string, id: string }; // Store the selected product
     }
 } = {};
@@ -93,12 +94,16 @@ app.post('/webhook', async (req: express.Request, res: express.Response) => {
                                     // Create a cart with the selected product
                                     let cartId = conversationState[from].cartId;
                                     let cartVersion = conversationState[from].cartVersion;
+                                    let lineItemId;
+
                                     if (!cartId) {
                                         const cart = await createCart(selectedProduct.id, 1); // Pass selected product ID and quantity
                                         cartId = cart.id;
                                         cartVersion = cart.version; // Capture the cart version for future updates
+                                        lineItemId = cart.lineItems?.[0]?.id; // Capture the lineItemId from the cart
                                         conversationState[from].cartId = cartId;
                                         conversationState[from].cartVersion = cartVersion;
+                                        conversationState[from].lineItemId = lineItemId;
                                         conversationState[from].selectedProduct = selectedProduct;
                                     }
 
@@ -114,41 +119,93 @@ app.post('/webhook', async (req: express.Request, res: express.Response) => {
                             const selectedProduct = conversationState[from]?.selectedProduct;
                             const cartId = conversationState[from]?.cartId;
                             let cartVersion = conversationState[from]?.cartVersion;
+                            const lineItemId = conversationState[from]?.lineItemId; // Track the lineItemId
 
                             if (text === 'add to cart') {
                                 if (selectedProduct && cartId) {
                                     const cartContents = await getCartContents(cartId);
-                                    cartVersion = cartContents.version; // Ensure we always have the latest cart version
-
-                                    const cartSummary = cartContents.lineItems
-                                        .map((item: any) => `${item.name.en_US} - Quantity: ${item.quantity}`)
-                                        .join('\n');
-                                    await sendMessageToWhatsApp(from, `Product added to cart. Here is your current cart:\n${cartSummary}`);
-                                    conversationState[from].state = null; // Reset state after adding to cart
+                            
+                                    // Check if the product is already in the cart
+                                    const lineItem = cartContents.lineItems.find((item: any) => item.productId === selectedProduct.id);
+                            
+                                    if (lineItem) {
+                                        // Product is already in the cart, change the quantity to 1 silently
+                                        const updatedCart = await changeLineItemQuantity(cartId, lineItem.id, 1, conversationState[from].cartVersion);
+                                        conversationState[from].cartVersion = updatedCart.version;
+                                    } else {
+                                        // Product is not in the cart, add it to the cart
+                                        const { version, lineItemId } = await addProductToCart(cartId, selectedProduct.id, conversationState[from].cartVersion);
+                                        
+                                        // Update conversation state with new cart version and line item ID
+                                        conversationState[from].cartVersion = version;
+                                        conversationState[from].lineItemId = lineItemId;
+                                        
+                                        await sendMessageToWhatsApp(from, `Product added to your cart.`);
+                                    }
+                            
+                                    const updatedCartContents = await getCartContents(cartId);
+                                    await sendMessageToWhatsApp(from, `You now have ${updatedCartContents.totalLineItemQuantity} product(s) in your cart with a total of ${updatedCartContents.totalPrice.centAmount / 100} USD.`);
+                            
+                                    // Ask if the customer wants to place the order
+                                    await sendMessageToWhatsApp(from, `Would you like to place the order? Reply with 'Yes' to confirm.`);
+                            
+                                    // Set the state to awaiting-order-confirmation
+                                    conversationState[from].state = 'awaiting-order-confirmation';
                                 } else {
                                     await sendMessageToWhatsApp(from, "Product not found for adding to cart.");
                                 }
-                            } else if (text === 'continue browsing') {
-                                if (cartId && selectedProduct) {
-                                    await removeLineItemFromCart(cartId, selectedProduct.id, cartVersion);
-                                    cartVersion++; // Increment the version after updating the cart
-                                    conversationState[from].cartVersion = cartVersion; // Update the cart version in state
+                            }                                                       
+                            else if (text === 'continue browsing') {
+                                if (cartId && conversationState[from].lineItemId) {
+                                    // Remove the currently selected product's line item
+                                    const updatedVersion = await removeLineItemFromCart(cartId, conversationState[from].lineItemId, conversationState[from].cartVersion);
+                                    
+                                    // Update the conversation state with the new cart version
+                                    conversationState[from].cartVersion = updatedVersion;
+                                    
+                                    const currentCategoryProducts = conversationState[from].products || [];
+                                    const productNames = currentCategoryProducts.map(prod => prod.name).join('\n');
+                                    await sendMessageToWhatsApp(from, `Here are the products:\n${productNames}`);
+                                    conversationState[from].state = 'awaiting-product-selection';
+                                } else {
+                                    await sendMessageToWhatsApp(from, "No product found in the cart to remove.");
                                 }
-
-                                const currentCategoryProducts = conversationState[from].products || [];
-                                const productNames = currentCategoryProducts.map(prod => prod.name).join('\n');
-                                await sendMessageToWhatsApp(from, `Here are the products:\n${productNames}`);
-                                conversationState[from].state = 'awaiting-product-selection';
                             } else if (text === 'new category') {
                                 const categories = await getCategories();
                                 const validCategories = categories.filter((cat: any) => cat.slug && cat.slug['en-US']);
                                 const categoryNames = validCategories.map((cat: any) => cat.name['en-US']).join('\n');
                                 await sendMessageToWhatsApp(from, `Please choose a new category:\n${categoryNames}`);
                                 conversationState[from].state = 'awaiting-category-selection';
-                            } else {
+                            }else {
                                 await sendMessageToWhatsApp(from, 'Please type "Add to cart", "Continue browsing", or "New category".');
                             }
                         }
+                        else if (currentState === 'awaiting-order-confirmation') {
+                            const cartId = conversationState[from]?.cartId;  // Retrieve cartId from the conversation state
+                        
+                            if (text.toLowerCase() === 'yes' && cartId) {
+                                const cartVersion = conversationState[from]?.cartVersion;
+                        
+                                if (cartId && cartVersion) {
+                                    // Make the API call to create the order
+                                    try {
+                                        const order = await createOrder(cartId, cartVersion);
+                        
+                                        // Notify customer of the successful order
+                                        await sendMessageToWhatsApp(from, `Your order has been placed successfully! Your order ID is ${order.id}.`);
+                                        conversationState[from].state = null; // Reset the conversation state
+                                    } catch (error) {
+                                        // Handle any error from the order creation
+                                        await sendMessageToWhatsApp(from, `Sorry, we couldn't place your order. Please try again.`);
+                                        console.error("Error placing order:", error);
+                                    }
+                                } else {
+                                    await sendMessageToWhatsApp(from, "Cart information is missing. Unable to place the order.");
+                                }
+                            } else {
+                                await sendMessageToWhatsApp(from, "Order not confirmed. Please type 'Yes' if you'd like to place the order.");
+                            }
+                        }                        
                     }
                 }
             }
@@ -212,26 +269,6 @@ async function getProductDetailsById(productId: string) {
     }
 }
 
-async function addProductToCart(cartId: string, productId: string) {
-    try {
-        const response = await apiRoot.carts().withId({ ID: cartId }).post({
-            body: {
-                version: 1, // Assuming the initial version; you may need to track cart version
-                actions: [{
-                    action: 'addLineItem',
-                    productId
-                }]
-            }
-        }).execute();
-
-        console.log("Product added to cart. Cart ID:", cartId);
-        console.log("Updated Cart:", response.body.lineItems);
-    } catch (error) {
-        console.error("Error adding product to cart:", error.response ? error.response.data : error.message);
-        throw new Error("Failed to add product to cart");
-    }
-}
-
 // Create cart function now returns the cart version and ID
 async function createCart(productId: string, quantity: number = 1) {
     try {
@@ -247,7 +284,10 @@ async function createCart(productId: string, quantity: number = 1) {
                         productId: productId,  // Product ID passed in
                         quantity: quantity,    // Default quantity is 1
                     }
-                ]
+                ],
+                shippingAddress: {
+                    country: "US"
+                }
             }
         }).execute();
 
@@ -261,23 +301,70 @@ async function createCart(productId: string, quantity: number = 1) {
 }
 
 // Helper function to remove a line item from the cart with version tracking
-async function removeLineItemFromCart(cartId: string, productId: string, version: number) {
+async function removeLineItemFromCart(cartId: string, lineItemId: string, version: number) {
     try {
         const response = await apiRoot.carts().withId({ ID: cartId }).post({
             body: {
-                version: version, // Use the current version of the cart
+                version: version, // Use the current cart version
                 actions: [{
                     action: 'removeLineItem',
-                    lineItemId: productId
+                    lineItemId: lineItemId
                 }]
             }
         }).execute();
 
-        console.log(`Removed product ${productId} from cart ${cartId}. New version: ${response.body.version}`);
-        return response.body.version; // Return updated version
+        console.log(`Removed product ${lineItemId} from cart ${cartId}. New version: ${response.body.version}`);
+        
+        // Return the updated cart version
+        return response.body.version;
     } catch (error) {
         console.error("Error removing product from cart:", error.response ? error.response.data : error.message);
         throw new Error("Failed to remove product from cart");
+    }
+}
+
+async function addProductToCart(cartId: string, productId: string, version: number) {
+    try {
+        const response = await apiRoot.carts().withId({ ID: cartId }).post({
+            body: {
+                version: version, // Pass the current version of the cart
+                actions: [{
+                    action: 'addLineItem',
+                    productId: productId
+                }]
+            }
+        }).execute();
+
+        console.log(`Product added to cart. Cart ID: ${cartId}`);
+        console.log(`Updated Cart:`, response.body.lineItems);
+
+        // Return the updated cart version and the new line item ID
+        const newLineItemId = response.body.lineItems[response.body.lineItems.length - 1].id;
+        return { version: response.body.version, lineItemId: newLineItemId };
+    } catch (error) {
+        console.error("Error adding product to cart:", error.response ? error.response.data : error.message);
+        throw new Error("Failed to add product to cart");
+    }
+}
+
+async function changeLineItemQuantity(cartId: string, lineItemId: string, quantity: number, version: number) {
+    try {
+        const response = await apiRoot.carts().withId({ ID: cartId }).post({
+            body: {
+                version: version,
+                actions: [{
+                    action: 'changeLineItemQuantity',
+                    lineItemId: lineItemId,
+                    quantity: quantity
+                }]
+            }
+        }).execute();
+
+        console.log(`Updated quantity of line item ${lineItemId} in cart ${cartId} to ${quantity}.`);
+        return response.body; // Return the updated cart
+    } catch (error) {
+        console.error("Error changing line item quantity:", error.response ? error.response.data : error.message);
+        throw new Error("Failed to change line item quantity");
     }
 }
 
@@ -288,6 +375,26 @@ async function getCartContents(cartId: string) {
     } catch (error) {
         console.error("Error retrieving cart contents:", error);
         throw new Error("Failed to retrieve cart contents");
+    }
+}
+
+async function createOrder(cartId: string, cartVersion: number) {
+    try {
+        const response = await apiRoot.orders().post({
+            body: {
+                cart: {
+                    id: cartId,
+                    typeId: 'cart'
+                },
+                version: cartVersion
+            }
+        }).execute();
+
+        console.log(`Order created successfully with ID: ${response.body.id}`);
+        return response.body; // Return order object
+    } catch (error) {
+        console.error("Error creating order:", error.response ? error.response.data : error.message);
+        throw new Error("Failed to create order");
     }
 }
 
