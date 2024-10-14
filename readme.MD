@@ -8,7 +8,7 @@
 
 A sample integration between commercetools and whatsapp. Requires a Facebook business account. Using latest version of commercetools TS SDK.
 
-##Scope and Things to Note
+## Scope and Things to Note
 
 More than anything, this is an excersice to highlight an integration between commercetools and whatsapp. Code does not follow best practices and is made available as-is.
 This example focuses on a cart with a single item. Customer information is not collected, shipping address is set as "US" when the cart is created, and we are not collecting payment.
